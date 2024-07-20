@@ -12,13 +12,13 @@ export class SignalingServerStack extends cdk.Stack {
     const table = new dynamodb.Table(this, 'WebRTCSignalingTable', {
       partitionKey: { name: 'SessionId', type: dynamodb.AttributeType.STRING },
       sortKey: { name: 'ConnectionId', type: dynamodb.AttributeType.STRING },
-      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,    
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
       timeToLiveAttribute: "expires_at"
     });
 
     // Lambda Function
     const signalingFunction = new lambda.Function(this, 'SignalingFunction', {
-      runtime: lambda.Runtime.NODEJS_16_X,
+      runtime: lambda.Runtime.NODEJS_20_X,
       handler: 'index.handler',
       code: lambda.Code.fromAsset('lambda'),
       environment: {
@@ -33,13 +33,26 @@ export class SignalingServerStack extends cdk.Stack {
     const api = new apigateway.RestApi(this, 'SignalingApi', {
       restApiName: 'Signaling Service',
       description: 'This service handles WebRTC signaling.',
+      defaultCorsPreflightOptions: {
+        allowOrigins: apigateway.Cors.ALL_ORIGINS,
+        allowMethods: apigateway.Cors.ALL_METHODS,
+      },
     });
 
-    const signalingIntegration = new apigateway.LambdaIntegration(signalingFunction);
+    // Define the /offer endpoint
+    const offerResource = api.root.addResource('offer');
+    offerResource.addMethod('POST', new apigateway.LambdaIntegration(signalingFunction));
 
-    // Define API routes
-    api.root.addResource('offer').addMethod('POST', signalingIntegration);
-    api.root.addResource('answer').addMethod('POST', signalingIntegration);
-    api.root.addResource('candidate').addMethod('POST', signalingIntegration);
+    // Define the /answer endpoint
+    const answerResource = api.root.addResource('answer');
+    answerResource.addMethod('POST', new apigateway.LambdaIntegration(signalingFunction));
+
+    // Define the /candidate endpoint
+    const candidateResource = api.root.addResource('candidate');
+    candidateResource.addMethod('POST', new apigateway.LambdaIntegration(signalingFunction));
+
+    // Define the /create endpoint
+    const createResource = api.root.addResource('create');
+    createResource.addMethod('POST', new apigateway.LambdaIntegration(signalingFunction));
   }
 }
