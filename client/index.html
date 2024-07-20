@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebRTC Data Channel Text Exchange</title>
+    <style>
+        #messages {
+            border: 1px solid black;
+            height: 200px;
+            overflow-y: scroll;
+            margin-bottom: 10px;
+        }
+        #messages div {
+            margin: 5px;
+            padding: 5px;
+            border-bottom: 1px solid #ccc;
+        }
+    </style>
+</head>
+<body>
+    <h1>WebRTC Data Channel Text Exchange</h1>
+    <button id="create">Create Chat</button>
+    <input type="text" id="sessionId" placeholder="Session ID">
+    <button id="join">Join Chat</button>
+    <div id="messages"></div>
+    <input type="text" id="messageInput" placeholder="Type a message" disabled>
+    <button id="send" disabled>Send</button>
+
+    <script>
+        const apiUrl = 'https://your-api-gateway-endpoint'; // Replace with your actual API Gateway endpoint
+
+        let peerConnection;
+        let dataChannel;
+        let sessionId;
+
+        const createButton = document.getElementById('create');
+        const joinButton = document.getElementById('join');
+        const sendButton = document.getElementById('send');
+        const messageInput = document.getElementById('messageInput');
+        const messages = document.getElementById('messages');
+
+        const configuration = {
+            iceServers: [
+                { urls: 'stun:stun.l.google.com:19302' }
+            ]
+        };
+
+        createButton.onclick = createChat;
+        joinButton.onclick = joinChat;
+        sendButton.onclick = sendMessage;
+
+        async function createChat() {
+            const response = await fetch(`${apiUrl}/create`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'create' })
+            });
+            const data = await response.json();
+            sessionId = data.sessionId;
+            document.getElementById('sessionId').value = sessionId;
+
+            peerConnection = new RTCPeerConnection(configuration);
+
+            dataChannel = peerConnection.createDataChannel('chat');
+            dataChannel.onmessage = handleReceiveMessage;
+            dataChannel.onopen = handleDataChannelStatusChange;
+            dataChannel.onclose = handleDataChannelStatusChange;
+
+            peerConnection.onicecandidate = handleIceCandidate;
+
+            const offer = await peerConnection.createOffer();
+            await peerConnection.setLocalDescription(offer);
+
+            await fetch(`${apiUrl}/offer`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'offer', sessionId, sdp: offer.sdp })
+            });
+        }
+
+        async function joinChat() {
+            sessionId = document.getElementById('sessionId').value;
+            peerConnection = new RTCPeerConnection(configuration);
+
+            peerConnection.ondatachannel = event => {
+                dataChannel = event.channel;
+                dataChannel.onmessage = handleReceiveMessage;
+                dataChannel.onopen = handleDataChannelStatusChange;
+                dataChannel.onclose = handleDataChannelStatusChange;
+            };
+
+            peerConnection.onicecandidate = handleIceCandidate;
+
+            const response = await fetch(`${apiUrl}/offer?sessionId=${sessionId}`);
+            const data = await response.json();
+
+            const offer = data.sdp;
+            await peerConnection.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp: offer }));
+
+            const answer = await peerConnection.createAnswer();
+            await peerConnection.setLocalDescription(answer);
+
+            await fetch(`${apiUrl}/answer`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'answer', sessionId, sdp: answer.sdp })
+            });
+        }
+
+        function handleIceCandidate(event) {
+            if (event.candidate) {
+                fetch(`${apiUrl}/candidate`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        action: 'candidate',
+                        sessionId,
+                        candidate: event.candidate
+                    })
+                });
+            }
+        }
+
+        function handleReceiveMessage(event) {
+            const message = event.data;
+            const messageElement = document.createElement('div');
+            messageElement.textContent = `Peer: ${message}`;
+            messages.appendChild(messageElement);
+        }
+
+        function handleDataChannelStatusChange() {
+            if (dataChannel) {
+                const state = dataChannel.readyState;
+
+                if (state === 'open') {
+                    messageInput.disabled = false;
+                    sendButton.disabled = false;
+                } else {
+                    messageInput.disabled = true;
+                    sendButton.disabled = true;
+                }
+            }
+        }
+
+        function sendMessage() {
+            const message = messageInput.value;
+            dataChannel.send(message);
+            const messageElement = document.createElement('div');
+            messageElement.textContent = `You: ${message}`;
+            messages.appendChild(messageElement);
+            messageInput.value = '';
+        }
+    </script>
+</body>
+</html>
