@@ -36,15 +36,16 @@ const createSession = async () => {
 
 const handleOffer = async (body) => {
     const offerId = generateId();
-    await dynamodb.put({
+    await dynamodb.send(new ddbLib.PutCommand({
         TableName: process.env.TABLE_NAME,
         Item: {
+            SessionId: body.sessionId,
             ConnectionId: offerId,
             SDP: body.sdp,
             Type: 'offer',
             expires_at: ttl()
         },
-    }).promise();
+    }));
     return {
         statusCode: 200,
         body: JSON.stringify({ offerId: offerId }),
@@ -52,16 +53,16 @@ const handleOffer = async (body) => {
 };
 
 const handleAnswer = async (body) => {
-    await dynamodb.update({
+    await dynamodb.send(new ddbLib.UpdateCommand({
         TableName: process.env.TABLE_NAME,
-        Key: { ConnectionId: body.offerId },
-        UpdateExpression: "set SDP = :s, Type = :t",
+        Key: { SessionId: body.sessionId, ConnectionId: 'offer' },
+        UpdateExpression: "set SDP = :s, Type = :t, expires_at = :ttl",
         ExpressionAttributeValues: {
             ':s': body.sdp,
             ':t': 'answer',
-            ':expires_at': ttl()
+            ':ttl': ttl()
         },
-    }).promise();
+    }));
     return {
         statusCode: 200,
         body: JSON.stringify({ status: 'Answer stored' }),
@@ -69,16 +70,16 @@ const handleAnswer = async (body) => {
 };
 
 const handleCandidate = async (body) => {
-    await dynamodb.update({
+    await dynamodb.send(new ddbLib.UpdateCommand({
         TableName: process.env.TABLE_NAME,
-        Key: { ConnectionId: body.connectionId },
-        UpdateExpression: "set Candidates = list_append(if_not_exists(Candidates, :empty_list), :c)",
+        Key: { SessionId: body.sessionId, ConnectionId: 'offer' },
+        UpdateExpression: "set Candidates = list_append(if_not_exists(Candidates, :empty_list), :c), expires_at = :ttl",
         ExpressionAttributeValues: {
             ':c': [body.candidate],
             ':empty_list': [],
-            ':expires_at': ttl()
+            ':ttl': ttl()
         },
-    }).promise();
+    }));
     return {
         statusCode: 200,
         body: JSON.stringify({ status: 'Candidate stored' }),
