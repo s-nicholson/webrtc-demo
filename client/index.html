@@ -4,191 +4,286 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>WebRTC Data Channel Text Exchange</title>
+    <link href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css" rel="stylesheet">
     <style>
         #messages {
-            border: 1px solid black;
-            height: 200px;
+            border: 1px solid #ccc;
+            height: 300px;
             overflow-y: scroll;
-            margin-bottom: 10px;
+            padding: 10px;
+            background-color: #f9f9f9;
         }
         #messages div {
-            margin: 5px;
+            margin: 5px 0;
             padding: 5px;
-            border-bottom: 1px solid #ccc;
+            border-radius: 5px;
+        }
+        .message-sent {
+            background-color: #e1ffc7;
+            text-align: right;
+        }
+        .message-received {
+            background-color: #fff;
         }
     </style>
 </head>
 <body>
-    <h1>WebRTC Data Channel Text Exchange</h1>
-    <button id="create">Create Chat</button>
-    <input type="text" id="sessionId" placeholder="Session ID">
-    <button id="join">Join Chat</button>
-    <div id="messages"></div>
-    <input type="text" id="messageInput" placeholder="Type a message" disabled>
-    <button id="send" disabled>Send</button>
+    <div class="container">
+        <h1 class="mt-5">WebRTC Data Channel Text Exchange</h1>
+        <div id="signal-controls" class="row mt-3">
+            <div class="col-md-6">
+                <div class="input-group mt-2">
+                    <input type="text" id="signalUrl" class="form-control" placeholder="Enter the URL of the signaling server">
+                    <div class="input-group-append">
+                        <button id="save" class="btn btn-secondary">Set signaling URL</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div id="setup-controls" class="row mt-3" style="display: none  ;">
+            <div class="col-md-6">
+                <button id="create" class="btn btn-primary">Create Chat</button>
+                <div class="input-group mt-2">
+                    <input type="text" id="sessionId" class="form-control" placeholder="Session ID">
+                    <div class="input-group-append">
+                        <button id="copy" class="btn btn-outline-secondary">Copy</button>
+                        <button id="join" class="btn btn-secondary">Join Chat</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="row mt-3">
+            <div class="col-md-6">
+                <div id="messages"></div>
+            </div>
+        </div>
+        <div class="row mt-3">
+            <div class="col-md-6">
+                <div class="input-group">
+                    <input type="text" id="messageInput" class="form-control" placeholder="Type a message" disabled>
+                    <div class="input-group-append">
+                        <button id="send" class="btn btn-success" disabled>Send</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+<script>
+    let apiUrl;
+    const configuration = {
+        iceServers: [
+            { urls: 'stun:stun.l.google.com:19302' }
+        ]
+    };
 
-    <script>
-        const apiUrl = 'https://your.apigw.endpoint'; // Replace with your actual API Gateway endpoint
+    // WebRTC components
+    let peerConnection;
+    let dataChannel;
 
-        let peerConnection;
-        let dataChannel;
-        let sessionId;
-        let timerId = 0;
+    // UUID used to coordinate things on the signaling server
+    let sessionId;
 
-        const createButton = document.getElementById('create');
-        const joinButton = document.getElementById('join');
-        const sendButton = document.getElementById('send');
-        const messageInput = document.getElementById('messageInput');
-        const messages = document.getElementById('messages');
+    // Used to poll for connection from peer
+    let timerId = 0;
 
-        const configuration = {
-            iceServers: [
-                { urls: 'stun:stun.l.google.com:19302' }
-            ]
-        };
+    // Signal controls
+    const signalControls = document.getElementById('signal-controls');
+    const signalUrlInput = document.getElementById('signalUrl');
+    const saveButton = document.getElementById('save');
 
-        createButton.onclick = createChat;
-        joinButton.onclick = joinChat;
-        sendButton.onclick = sendMessage;
+    saveButton.onclick = saveSignalUrl;
 
-        async function createChat() {
-            const response = await fetch(`${apiUrl}/create`, {
+    // Setup controls
+    const setupControls = document.getElementById('setup-controls');
+    const createButton = document.getElementById('create');
+    const sessionIdInput = document.getElementById('sessionId');
+    const joinButton = document.getElementById('join');
+    const copyButton = document.getElementById('copy');
+
+    createButton.onclick = createChat;
+    joinButton.onclick = joinChat;
+    copyButton.onclick = copySessionId;
+
+    // Message controls
+    const messageInput = document.getElementById('messageInput');
+    const messages = document.getElementById('messages');
+    const sendButton = document.getElementById('send');
+
+    sendButton.onclick = sendMessage;
+    messageInput.addEventListener("keyup", ({key}) => {
+        if (key === "Enter") {
+            sendMessage();
+        }
+    });
+
+    async function createChat() {
+        createButton.style.display = 'none';
+        joinButton.style.display = 'none';
+        sessionIdInput.setAttribute('readonly', true);
+
+        const response = await fetch(`${apiUrl}/create`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'create' })
+        });
+        const data = await response.json();
+        sessionId = data.sessionId;
+        sessionIdInput.value = sessionId;
+
+        peerConnection = new RTCPeerConnection(configuration);
+
+        dataChannel = peerConnection.createDataChannel('chat');
+        dataChannel.onmessage = handleReceiveMessage;
+        dataChannel.onopen = handleDataChannelStatusChange;
+        dataChannel.onclose = handleDataChannelStatusChange;
+
+        peerConnection.onicecandidate = handleIceCandidate;
+
+        const offer = await peerConnection.createOffer();
+        await peerConnection.setLocalDescription(offer);
+
+        await fetch(`${apiUrl}/offer`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'offer', sessionId, sdp: offer.sdp })
+        });
+
+        timerId = setInterval(async () => {
+            if (peerConnection.remoteDescription) {
+                clearInterval(timerId);
+                return;
+            }
+            const response = await fetch(`${apiUrl}/answer`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ action: 'create' })
+                body: JSON.stringify({ action: 'getAnswer', sessionId })
             });
-            const data = await response.json();
-            sessionId = data.sessionId;
-            document.getElementById('sessionId').value = sessionId;
+            let data = await response.json();
+            if (response.status == 200) {
+                peerConnection.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: data.sdp }));
+            } else {
+                console.log("No answer found: " + data.error);
+            }
+        }, 1000);
+    }
 
-            peerConnection = new RTCPeerConnection(configuration);
+    async function joinChat() {
+        createButton.style.display = 'none';
+        joinButton.style.display = 'none';
+        copyButton.style.display = 'none';
+        sessionIdInput.setAttribute('readonly', true);
 
-            dataChannel = peerConnection.createDataChannel('chat');
+        sessionId = sessionIdInput.value;
+        peerConnection = new RTCPeerConnection(configuration);
+
+        peerConnection.ondatachannel = event => {
+            dataChannel = event.channel;
             dataChannel.onmessage = handleReceiveMessage;
             dataChannel.onopen = handleDataChannelStatusChange;
             dataChannel.onclose = handleDataChannelStatusChange;
+        };
 
-            peerConnection.onicecandidate = handleIceCandidate;
+        peerConnection.onicecandidate = handleIceCandidate;
 
-            const offer = await peerConnection.createOffer();
-            await peerConnection.setLocalDescription(offer);
+        const response = await fetch(`${apiUrl}/offer`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'getOffer', sessionId })
+        });
+        const data = await response.json();
 
-            await fetch(`${apiUrl}/offer`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ action: 'offer', sessionId, sdp: offer.sdp })
+        const offer = data.sdp;
+        await peerConnection.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp: offer }));
+
+        const answer = await peerConnection.createAnswer();
+        await peerConnection.setLocalDescription(answer);
+
+        await fetch(`${apiUrl}/answer`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'answer', sessionId, sdp: answer.sdp })
+        });
+
+        await fetchCandidates();
+    }
+
+    async function fetchCandidates() {
+        const response = await fetch(`${apiUrl}/candidate`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'getCandidates', sessionId })
+        });
+        const data = await response.json();
+
+        if (data.candidates) {
+            data.candidates.forEach(async candidate => {
+                await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
             });
-
-            timerId = setInterval(async () => {
-                if (peerConnection.remoteDescription) {
-                    clearInterval(timerId);
-                    return;
-                }
-                const response = await fetch(`${apiUrl}/answer`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ action: 'getAnswer', sessionId })
-                });
-                let data = await response.json();
-                if (response.status == 200) {
-                    peerConnection.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: data.sdp }));
-                } else {
-                    console.log("No answer found: " + data.error);
-                }
-            }, 1000);
         }
+    }
 
-        async function joinChat() {
-            sessionId = document.getElementById('sessionId').value;
-            peerConnection = new RTCPeerConnection(configuration);
-
-            peerConnection.ondatachannel = event => {
-                dataChannel = event.channel;
-                dataChannel.onmessage = handleReceiveMessage;
-                dataChannel.onopen = handleDataChannelStatusChange;
-                dataChannel.onclose = handleDataChannelStatusChange;
-            };
-
-            peerConnection.onicecandidate = handleIceCandidate;
-
-            const response = await fetch(`${apiUrl}/offer`, {
+    function handleIceCandidate(event) {
+        if (event.candidate) {
+            fetch(`${apiUrl}/candidate`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ action: 'getOffer', sessionId })
+                body: JSON.stringify({
+                    action: 'candidate',
+                    sessionId,
+                    candidate: event.candidate
+                })
             });
-            const data = await response.json();
-
-            const offer = data.sdp;
-            await peerConnection.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp: offer }));
-
-            const answer = await peerConnection.createAnswer();
-            await peerConnection.setLocalDescription(answer);
-
-            await fetch(`${apiUrl}/answer`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ action: 'answer', sessionId, sdp: answer.sdp })
-            });
-
-            await fetchCandidates();
         }
+    }
 
-        async function fetchCandidates() {
-            const response = await fetch(`${apiUrl}/candidate`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ action: 'getCandidates', sessionId })
-            });
-            const data = await response.json();
+    function handleReceiveMessage(event) {
+        const message = decryptMessage(event.data);
+        const messageElement = document.createElement('div');
+        messageElement.textContent = `Peer: ${message}`;
+        messages.appendChild(messageElement);
+    }
 
-            if (data.candidates) {
-                data.candidates.forEach(async candidate => {
-                    await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
-                });
+    function handleDataChannelStatusChange() {
+        if (dataChannel) {
+            const state = dataChannel.readyState;
+
+            if (state === 'open') {
+                messageInput.disabled = false;
+                sendButton.disabled = false;
+                alert("Connected");
             }
         }
+    }
 
-        function handleIceCandidate(event) {
-            if (event.candidate) {
-                fetch(`${apiUrl}/candidate`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        action: 'candidate',
-                        sessionId,
-                        candidate: event.candidate
-                    })
-                });
-            }
-        }
+    function sendMessage() {
+        const message = messageInput.value;
+        dataChannel.send(encryptMessage(message));
+        const messageElement = document.createElement('div');
+        messageElement.textContent = `You: ${message}`;
+        messages.appendChild(messageElement);
+        messageInput.value = '';
+    }
 
-        function handleReceiveMessage(event) {
-            const message = event.data;
-            const messageElement = document.createElement('div');
-            messageElement.textContent = `Peer: ${message}`;
-            messages.appendChild(messageElement);
-        }
+    function copySessionId() {
+        sessionIdInput.select();
+        document.execCommand('copy');
+    }
 
-        function handleDataChannelStatusChange() {
-            if (dataChannel) {
-                const state = dataChannel.readyState;
+    function saveSignalUrl() {
+        signalControls.style.display = 'none';
+        setupControls.style.display = 'block';
+        apiUrl = signalUrlInput.value;
+    }
 
-                if (state === 'open') {
-                    messageInput.disabled = false;
-                    sendButton.disabled = false;
-                    alert("Connected");
-                }
-            }
-        }
+    function encryptMessage(message) {
+        // TODO
+        return message;
+    }
 
-        function sendMessage() {
-            const message = messageInput.value;
-            dataChannel.send(message);
-            const messageElement = document.createElement('div');
-            messageElement.textContent = `You: ${message}`;
-            messages.appendChild(messageElement);
-            messageInput.value = '';
-        }
-    </script>
-</body>
+    function decryptMessage(message) {
+        // TODO
+        return message;
+    }
+</script>
 </html>
