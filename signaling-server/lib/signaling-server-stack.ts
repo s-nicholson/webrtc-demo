@@ -3,6 +3,7 @@ import { Construct } from 'constructs';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as apigateway from 'aws-cdk-lib/aws-apigateway';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
+import { RemovalPolicy } from 'aws-cdk-lib';
 
 export class SignalingServerStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -12,7 +13,8 @@ export class SignalingServerStack extends cdk.Stack {
     const table = new dynamodb.Table(this, 'WebRTCSignalingTable', {
       partitionKey: { name: 'SessionId', type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
-      timeToLiveAttribute: "expires_at"
+      timeToLiveAttribute: "expires_at",
+      removalPolicy: RemovalPolicy.DESTROY
     });
 
     // Lambda Function
