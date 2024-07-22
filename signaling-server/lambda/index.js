@@ -14,10 +14,16 @@ exports.handler = async (event) => {
         return await createSession();
     } else if (action === 'offer') {
         return await handleOffer(body);
+    } else if (action === 'getOffer') {
+        return await getOffer(body.sessionId);
     } else if (action === 'answer') {
         return await handleAnswer(body);
+    } else if (action === 'getAnswer') {
+        return await getAnswer(body.sessionId);
     } else if (action === 'candidate') {
         return await handleCandidate(body);
+    } else if (action === 'getCandidates') {
+        return await getCandidates(body.sessionId);
     } else {
         return {
             statusCode: 400,
@@ -35,28 +41,45 @@ const createSession = async () => {
 };
 
 const handleOffer = async (body) => {
-    const offerId = generateId();
     await dynamodb.send(new ddbLib.PutCommand({
         TableName: process.env.TABLE_NAME,
         Item: {
             SessionId: body.sessionId,
-            ConnectionId: offerId,
             SDP: body.sdp,
-            Type: 'offer',
+            TxType: 'offer',
             expires_at: ttl()
         },
     }));
     return {
         statusCode: 200,
-        body: JSON.stringify({ offerId: offerId }),
+        body: JSON.stringify({ status: 'Offer stored' }),
     };
+};
+
+const getOffer = async (sessionId) => {
+    const result = await dynamodb.send(new ddbLib.GetCommand({
+        TableName: process.env.TABLE_NAME,
+        Key: { SessionId: sessionId },
+    }));
+
+    if (result.Item) {
+        return {
+            statusCode: 200,
+            body: JSON.stringify({ sdp: result.Item.SDP }),
+        };
+    } else {
+        return {
+            statusCode: 404,
+            body: JSON.stringify({ error: 'Offer not found' }),
+        };
+    }
 };
 
 const handleAnswer = async (body) => {
     await dynamodb.send(new ddbLib.UpdateCommand({
         TableName: process.env.TABLE_NAME,
-        Key: { SessionId: body.sessionId, ConnectionId: 'offer' },
-        UpdateExpression: "set SDP = :s, Type = :t, expires_at = :ttl",
+        Key: { SessionId: body.sessionId },
+        UpdateExpression: "set SDP = :s, TxType = :t, expires_at = :ttl",
         ExpressionAttributeValues: {
             ':s': body.sdp,
             ':t': 'answer',
@@ -69,10 +92,29 @@ const handleAnswer = async (body) => {
     };
 };
 
+const getAnswer = async (sessionId) => {
+    const result = await dynamodb.send(new ddbLib.GetCommand({
+        TableName: process.env.TABLE_NAME,
+        Key: { SessionId: sessionId },
+    }));
+
+    if (result.Item && result.Item.TxType == "answer") {
+        return {
+            statusCode: 200,
+            body: JSON.stringify({ sdp: result.Item.SDP }),
+        };
+    } else {
+        return {
+            statusCode: 404,
+            body: JSON.stringify({ error: 'Answer not found' }),
+        };
+    }
+};
+
 const handleCandidate = async (body) => {
     await dynamodb.send(new ddbLib.UpdateCommand({
         TableName: process.env.TABLE_NAME,
-        Key: { SessionId: body.sessionId, ConnectionId: 'offer' },
+        Key: { SessionId: body.sessionId },
         UpdateExpression: "set Candidates = list_append(if_not_exists(Candidates, :empty_list), :c), expires_at = :ttl",
         ExpressionAttributeValues: {
             ':c': [body.candidate],
@@ -86,8 +128,23 @@ const handleCandidate = async (body) => {
     };
 };
 
-const generateId = () => {
-    return Math.random().toString(36).substr(2, 9);
+const getCandidates = async (sessionId) => {
+    const result = await dynamodb.send(new ddbLib.GetCommand({
+        TableName: process.env.TABLE_NAME,
+        Key: { SessionId: sessionId },
+    }));
+
+    if (result.Item && result.Item.Candidates) {
+        return {
+            statusCode: 200,
+            body: JSON.stringify({ candidates: result.Item.Candidates }),
+        };
+    } else {
+        return {
+            statusCode: 404,
+            body: JSON.stringify({ error: 'Candidates not found' }),
+        };
+    }
 };
 
 const ttl = () => {

@@ -11,7 +11,6 @@ export class SignalingServerStack extends cdk.Stack {
     // DynamoDB Table
     const table = new dynamodb.Table(this, 'WebRTCSignalingTable', {
       partitionKey: { name: 'SessionId', type: dynamodb.AttributeType.STRING },
-      sortKey: { name: 'ConnectionId', type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
       timeToLiveAttribute: "expires_at"
     });
