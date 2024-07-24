@@ -5,31 +5,42 @@ const { randomUUID } = require('crypto');
 const client = new ddbClient.DynamoDBClient({});
 const dynamodb = ddbLib.DynamoDBDocumentClient.from(client);
 
+const corsHeaders = {
+    "Access-Control-Allow-Headers" : "Content-Type",
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "POST"
+};
 
 exports.handler = async (event) => {
     const body = JSON.parse(event.body);
     const action = body.action;
 
+    let response;
     if (action === 'create') {
-        return await createSession();
+        response = await createSession();
     } else if (action === 'offer') {
-        return await handleOffer(body);
+        response = await handleOffer(body);
     } else if (action === 'getOffer') {
-        return await getOffer(body.sessionId);
+        response = await getOffer(body.sessionId);
     } else if (action === 'answer') {
-        return await handleAnswer(body);
+        response = await handleAnswer(body);
     } else if (action === 'getAnswer') {
-        return await getAnswer(body.sessionId);
+        response = await getAnswer(body.sessionId);
     } else if (action === 'candidate') {
-        return await handleCandidate(body);
+        response = await handleCandidate(body);
     } else if (action === 'getCandidates') {
-        return await getCandidates(body.sessionId);
+        response = await getCandidates(body.sessionId);
     } else {
-        return {
+        response = {
             statusCode: 400,
             body: JSON.stringify({ error: 'Invalid action' }),
         };
     }
+
+    return {
+        ...response,
+        headers: corsHeaders
+    };
 };
 
 const createSession = async () => {
