@@ -46,7 +46,7 @@
                 <div class="input-group mt-2">
                     <input type="text" id="sessionId" class="form-control" placeholder="Session ID">
                     <div class="input-group-append">
-                        <button id="copy" class="btn btn-outline-secondary" style="display: none">Copy</button>
+                        <button id="copy" class="btn btn-outline-secondary" style="display: none">Copy Link</button>
                         <button id="join" class="btn btn-secondary">Join Chat</button>
                     </div>
                 </div>
@@ -84,9 +84,6 @@
     // UUID used to coordinate things on the signaling server
     let sessionId;
 
-    // Used to poll for connection from peer
-    let timerId = 0;
-
     // Signal controls
     const signalControls = document.getElementById('signal-controls');
     const signalUrlInput = document.getElementById('signalUrl');
@@ -103,7 +100,7 @@
 
     createButton.onclick = createChat;
     joinButton.onclick = joinChat;
-    copyButton.onclick = copySessionId;
+    copyButton.onclick = copyLink;
 
     // Message controls
     const messageInput = document.getElementById('messageInput');
@@ -111,8 +108,8 @@
     const sendButton = document.getElementById('send');
 
     sendButton.onclick = sendMessage;
-    messageInput.addEventListener("keyup", ({key}) => {
-        if (key === "Enter") {
+    messageInput.addEventListener('keyup', ({key}) => {
+        if (key === 'Enter') {
             sendMessage();
         }
     });
@@ -134,12 +131,7 @@
         sessionIdInput.value = sessionId;
 
         peerConnection = new RTCPeerConnection(configuration);
-
-        dataChannel = peerConnection.createDataChannel('chat');
-        dataChannel.onmessage = handleReceiveMessage;
-        dataChannel.onopen = handleDataChannelStatusChange;
-        dataChannel.onclose = handleDataChannelStatusChange;
-
+        dataChannel = setupDataChannel(peerConnection.createDataChannel('chat'));
         peerConnection.onicecandidate = handleIceCandidate;
 
         const offer = await peerConnection.createOffer();
@@ -151,6 +143,7 @@
             body: JSON.stringify({ action: 'offer', sessionId, sdp: offer.sdp })
         });
 
+        let timerId = 0;
         timerId = setInterval(async () => {
             if (peerConnection.remoteDescription) {
                 clearInterval(timerId);
@@ -165,7 +158,7 @@
             if (response.status == 200) {
                 peerConnection.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: data.sdp }));
             } else {
-                console.log("No answer found: " + data.error);
+                console.log('No answer found: ' + data.error);
             }
         }, 1000);
     }
@@ -177,10 +170,7 @@
         peerConnection = new RTCPeerConnection(configuration);
 
         peerConnection.ondatachannel = event => {
-            dataChannel = event.channel;
-            dataChannel.onmessage = handleReceiveMessage;
-            dataChannel.onopen = handleDataChannelStatusChange;
-            dataChannel.onclose = handleDataChannelStatusChange;
+            dataChannel = setupDataChannel(event.channel);
         };
 
         peerConnection.onicecandidate = handleIceCandidate;
@@ -237,10 +227,15 @@
     }
 
     function handleReceiveMessage(event) {
-        const message = decryptMessage(event.data);
-        const messageElement = document.createElement('div');
-        messageElement.textContent = `Peer: ${message}`;
-        messages.appendChild(messageElement);
+        const message = event.data;
+        writeMessage(`Peer: ${message}`, 'blue');
+    }
+
+    function setupDataChannel(dataChannel) {
+        dataChannel.onmessage = handleReceiveMessage;
+        dataChannel.onopen = handleDataChannelStatusChange;
+        dataChannel.onclose = handleDataChannelStatusChange;
+        return dataChannel;
     }
 
     function handleDataChannelStatusChange() {
@@ -250,7 +245,7 @@
             if (state === 'open') {
                 messageInput.disabled = false;
                 sendButton.disabled = false;
-                alert("Connected");
+                writeMessage('Connected to peer!', 'green');
                 setupControls.style.display = 'none';
             }
         }
@@ -258,16 +253,18 @@
 
     function sendMessage() {
         const message = messageInput.value;
-        dataChannel.send(encryptMessage(message));
-        const messageElement = document.createElement('div');
-        messageElement.textContent = `You: ${message}`;
-        messages.appendChild(messageElement);
+        dataChannel.send(message);
+        writeMessage(`You: ${message}`, 'red');
         messageInput.value = '';
     }
 
-    function copySessionId() {
-        sessionIdInput.select();
-        document.execCommand('copy');
+    function copyLink() {
+        let chatUrl = window.location.href;
+        if (chatUrl.indexOf(apiUrl) == -1) {
+            chatUrl = chatUrl + '?signalServer=' + apiUrl;
+        }
+        chatUrl = chatUrl + '&sessionId=' + sessionIdInput.value;
+        navigator.clipboard.writeText(chatUrl);
     }
 
     function saveSignalUrl() {
@@ -276,26 +273,24 @@
         apiUrl = signalUrlInput.value;
     }
 
-    function encryptMessage(message) {
-        // TODO
-        return message;
-    }
-
-    function decryptMessage(message) {
-        // TODO
-        return message;
+    function writeMessage(message, color) {
+        const messageElement = document.createElement('div');
+        messageElement.style.color = color;
+        messageElement.textContent = message;
+        messages.appendChild(messageElement);
+        messages.scrollTop = messages.scrollHeight;
     }
 
     (function handleParams() {
         const urlParams = new URLSearchParams(window.location.search);
 
-        const signalServer = urlParams.get("signalServer");
+        const signalServer = urlParams.get('signalServer');
         if (signalServer) {
             signalUrlInput.value = signalServer;
             saveSignalUrl();
         }
 
-        const chatId = urlParams.get("sessionId");
+        const chatId = urlParams.get('sessionId');
         if (chatId) {
             sessionIdInput.value = chatId;
             joinChat();
