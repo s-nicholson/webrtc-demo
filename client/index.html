@@ -46,7 +46,7 @@
                 <div class="input-group mt-2">
                     <input type="text" id="sessionId" class="form-control" placeholder="Session ID">
                     <div class="input-group-append">
-                        <button id="copy" class="btn btn-outline-secondary">Copy</button>
+                        <button id="copy" class="btn btn-outline-secondary" style="display: none">Copy</button>
                         <button id="join" class="btn btn-secondary">Join Chat</button>
                     </div>
                 </div>
@@ -120,6 +120,8 @@
     async function createChat() {
         createButton.style.display = 'none';
         joinButton.style.display = 'none';
+
+        copyButton.style.display = 'block';
         sessionIdInput.setAttribute('readonly', true);
 
         const response = await fetch(`${apiUrl}/create`, {
@@ -169,10 +171,7 @@
     }
 
     async function joinChat() {
-        createButton.style.display = 'none';
-        joinButton.style.display = 'none';
-        copyButton.style.display = 'none';
-        sessionIdInput.setAttribute('readonly', true);
+        setupControls.style.display = 'none';
 
         sessionId = sessionIdInput.value;
         peerConnection = new RTCPeerConnection(configuration);
@@ -252,6 +251,7 @@
                 messageInput.disabled = false;
                 sendButton.disabled = false;
                 alert("Connected");
+                setupControls.style.display = 'none';
             }
         }
     }
@@ -285,5 +285,21 @@
         // TODO
         return message;
     }
+
+    (function handleParams() {
+        const urlParams = new URLSearchParams(window.location.search);
+
+        const signalServer = urlParams.get("signalServer");
+        if (signalServer) {
+            signalUrlInput.value = signalServer;
+            saveSignalUrl();
+        }
+
+        const chatId = urlParams.get("sessionId");
+        if (chatId) {
+            sessionIdInput.value = chatId;
+            joinChat();
+        }
+    }());
 </script>
 </html>
